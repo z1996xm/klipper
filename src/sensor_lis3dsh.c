@@ -152,14 +152,15 @@ lis3dsh_stop(struct lis3dsh *ax, uint8_t oid)
     uint32_t end2_time = timer_read_time();
 
     // Drain any measurements still in fifo
-    uint8_t msg[2] = {LIS_FIFO_SRC | LIS_AM_READ , 0x00 };              
+    uint8_t msg[2] = { LIS_FIFO_SRC | LIS_AM_READ , 0x00 };              
     spidev_transfer(ax->spi, 1, sizeof(msg), msg);
 
     uint8_t fifo_status = msg[1] & 0x20;
 
     while (!fifo_status) {
         lis3dsh_query(ax, oid);
-        msg[2] = {LIS_FIFO_SRC | LIS_AM_READ , 0x00 }; 
+        msg[0] = LIS_FIFO_SRC | LIS_AM_READ;
+        msg[1] = 0x00;
         spidev_transfer(ax->spi, 1, sizeof(msg), msg);
         fifo_status = msg[1] & 0x20;
     }
