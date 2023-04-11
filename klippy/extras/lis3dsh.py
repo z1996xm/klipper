@@ -1,34 +1,34 @@
 import logging, time, collections, threading, multiprocessing, os
 from . import bus, motion_report, adxl345
 
-# LIS3DSH registers
-REG_LIS3DSH_WHO_AM_I_ADDR = 0x0F
-REG_LIS3DSH_CTRL_REG4_ADDR = 0x20
-REG_LIS3DSH_CTRL_REG5_ADDR = 0x24
-REG_LIS3DSH_CTRL_REG3_ADDR = 0x24
-REG_LIS3DSH_CTRL_REG6_ADDR = 0x25
-REG_LIS3DSH_STATUS_REG_ADDR = 0x27
-REG_LIS3DSH_OUT_XL_ADDR = 0x28
-REG_LIS3DSH_OUT_XH_ADDR = 0x29
-REG_LIS3DSH_OUT_YL_ADDR = 0x2A
-REG_LIS3DSH_OUT_YH_ADDR = 0x2B
-REG_LIS3DSH_OUT_ZL_ADDR = 0x2C
-REG_LIS3DSH_OUT_ZH_ADDR = 0x2D
-REG_LIS3DSH_FIFO_CTRL = 0x2E
+# LIS3DH registers
+REG_LIS3DH_WHO_AM_I_ADDR = 0x0F
+REG_LIS3DH_CTRL_REG1_ADDR = 0x20
+REG_LIS3DH_CTRL_REG2_ADDR = 0x21
+REG_LIS3DH_CTRL_REG3_ADDR = 0x22
+REG_LIS3DH_CTRL_REG4_ADDR = 0x23
+REG_LIS3DH_CTRL_REG5_ADDR = 0x24
+REG_LIS3DH_CTRL_REG6_ADDR = 0x25
+REG_LIS3DH_STATUS_REG_ADDR = 0x27
+REG_LIS3DH_OUT_XL_ADDR = 0x28
+REG_LIS3DH_OUT_XH_ADDR = 0x29
+REG_LIS3DH_OUT_YL_ADDR = 0x2A
+REG_LIS3DH_OUT_YH_ADDR = 0x2B
+REG_LIS3DH_OUT_ZL_ADDR = 0x2C
+REG_LIS3DH_OUT_ZH_ADDR = 0x2D
+REG_LIS3DH_FIFO_CTRL = 0x2E
 REG_MOD_READ = 0x80
 REG_MOD_MULTI = 0x40
 
-LIS3DSH_X_AXIS_ENABLE   =          (0x1)
-LIS3DSH_Y_AXIS_ENABLE	=          (0x1<<1)
-LIS3DSH_Z_AXIS_ENABLE	=          (0x1<<2)
-LIS3DSH_XYZ_ENABLE      =          (0x07)
-LIS3DSH_BDU_NO_UPDATE	=          (0x1<<3)
-LIS3DSH_FILTER_BW_800   =          (0x00) 
-LIS3DSH_FULLSCALE_16    =          (0x20)      #/* 16 g */
-LIS3DSH_SELFTEST_NORMAL =          (0x00)
-LIS3DSH_SERIALINTERFACE_4WIRE    = (0x00)
-LIS3DSH_DATARATE_1600   =          (0x90)
-LIS3DSH_STREAM_MODE     =          (0x40)
+
+LIS3DH_XYZ_ENABLE      =          (0x07)
+LIS3DH_BDU_NO_UPDATE	=           (0x1<<3)
+LIS3DH_FILTER_BW_800   =          (0x00) 
+LIS3DH_FULLSCALE_16    =          (0x40)      #/* 16 g */
+LIS3DH_SELFTEST_NORMAL =          (0x00)
+LIS3DH_SERIALINTERFACE_4WIRE    = (0x00)
+LIS3DH_DATARATE_1600   =          (0x90)
+LIS3DH_STREAM_MODE     =          (0x40)
 
 
 QUERY_RATES = {
@@ -36,14 +36,14 @@ QUERY_RATES = {
     800: 0x80, 1600: 0x90,
 }
 
-LIS3DSH_DEV_ID = 0x63
+LIS3DSH_DEV_ID = 0x33
 SET_FIFO_CTL = 0x90
 
-FREEFALL_ACCEL = 9.80665 * 1000.
+FREEFALL_ACCEL = 9.80665 
 # SCALE_XY = 0.00048828125 * FREEFALL_ACCEL # 1 / 265 (at 3.3V) mg/LSB
 # SCALE_Z  = SCALE_XY
 
-SCALE_XY = SCALE_Z = 0.00073 * FREEFALL_ACCEL
+SCALE = 12. * FREEFALL_ACCEL/16.
 
 Accel_Measurement = collections.namedtuple(
     'Accel_Measurement', ('time', 'accel_x', 'accel_y', 'accel_z'))
@@ -60,8 +60,8 @@ class LIS3DSH:
         self.printer = config.get_printer()
         adxl345.AccelCommandHelper(config, self)
         self.query_rate = 0
-        am = {'x': (0, SCALE_XY), 'y': (1, SCALE_XY), 'z': (2, SCALE_Z),
-              '-x': (0, -SCALE_XY), '-y': (1, -SCALE_XY), '-z': (2, -SCALE_Z)}
+        am = {'x': (0, SCALE), 'y': (1, SCALE), 'z': (2, SCALE),
+              '-x': (0, -SCALE), '-y': (1, -SCALE), '-z': (2, -SCALE)}
         axes_map = config.getlist('axes_map', ('x','y','z'), count=3)
         if any([a not in am for a in axes_map]):
             raise config.error("Invalid lis3dsh axes_map parameter")
@@ -143,16 +143,27 @@ class LIS3DSH:
 
             for i in range(len(d) // BYTES_PER_SAMPLE):
                 d_xyz = d[i*BYTES_PER_SAMPLE:(i+1)*BYTES_PER_SAMPLE]
-                xhigh, xlow, yhigh, ylow, zhigh, zlow = d_xyz
+                xlow, xhigh, ylow, yhigh, zlow, zhigh = d_xyz
                 # Merge and perform twos-complement
+
                 rx = ((xhigh << 8) | xlow) - ((xhigh & 0x80) << 9)
                 ry = ((yhigh << 8) | ylow) - ((yhigh & 0x80) << 9)
                 rz = ((zhigh << 8) | zlow) - ((zhigh & 0x80) << 9)
+                
+                # rx = ((xhigh << 8) | xlow)
+                # ry = ((yhigh << 8) | ylow)
+                # rz = ((zhigh << 8) | zlow)
 
                 raw_xyz = (rx, ry, rz)
+
+                # x =round((raw_xyz[x_pos] /16)*12*9.80665, 6)
+                # y =round((raw_xyz[y_pos] /16)*12*9.80665, 6)
+                # z =round((raw_xyz[z_pos] /16)*12*9.80665, 6)
+
                 x = round(raw_xyz[x_pos] * x_scale, 6)
                 y = round(raw_xyz[y_pos] * y_scale, 6)
                 z = round(raw_xyz[z_pos] * z_scale, 6)
+                
                 ptime = round(time_base + (msg_cdiff + i) * inv_freq, 6)
                 samples[count] = (ptime, x, y, z)
                 count += 1
@@ -232,7 +243,7 @@ class LIS3DSH:
             return
         # In case of miswiring, testing LIS3DSH device ID prevents treating
         # noise or wrong signal as a correctly initialized device
-        dev_id = self.read_reg(REG_LIS3DSH_WHO_AM_I_ADDR)
+        dev_id = self.read_reg(REG_LIS3DH_WHO_AM_I_ADDR)
         logging.info("lis3dsh_dev_id: %x", dev_id)
         if dev_id != LIS3DSH_DEV_ID:
             raise self.printer.command_error(
@@ -241,13 +252,14 @@ class LIS3DSH:
                 "(e.g. faulty wiring) or a faulty lis3dsh chip."
                 % (dev_id, LIS3DSH_DEV_ID))
         # Setup chip in requested query rate
-        dev_data = LIS3DSH_BDU_NO_UPDATE | LIS3DSH_XYZ_ENABLE | QUERY_RATES[self.data_rate]
-        self.set_reg(REG_LIS3DSH_CTRL_REG4_ADDR, dev_data)
-        dev_data = LIS3DSH_FILTER_BW_800 | LIS3DSH_FULLSCALE_16 | LIS3DSH_SELFTEST_NORMAL | LIS3DSH_SERIALINTERFACE_4WIRE
-        self.set_reg(REG_LIS3DSH_CTRL_REG5_ADDR, dev_data)
-        dev_data = LIS3DSH_STREAM_MODE
-        self.set_reg(REG_LIS3DSH_FIFO_CTRL, dev_data)       #Stream Mode. If the FIFO is full the new sample overwrites the older one
-
+        dev_data =  0x47 
+        self.set_reg(REG_LIS3DH_CTRL_REG1_ADDR &(~(0xC0)), dev_data)
+        dev_data =  0x30
+        self.set_reg(REG_LIS3DH_CTRL_REG4_ADDR & (~(0xC0)), dev_data)
+        dev_data =  0x40
+        self.set_reg(REG_LIS3DH_CTRL_REG5_ADDR & (~(0xC0)), dev_data)       #Stream Mode. If the FIFO is full the new sample overwrites the older one
+        dev_data = 0x80
+        self.set_reg(REG_LIS3DH_FIFO_CTRL & (~(0xC0)), dev_data) 
         # Setup samples
         with self.lock:
             self.raw_samples = []

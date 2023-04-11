@@ -12,7 +12,7 @@ struct lis3dsh {
     uint32_t rest_ticks;
     struct spidev_s *spi;
     uint16_t sequence, limit_count;
-    uint8_t flags, data_count;
+    uint8_t flags, data_count, fifo_disable;
     uint8_t data[48];
 };
 
@@ -79,8 +79,9 @@ lis3dsh_reschedule_timer(struct lis3dsh *ax)
 
 // Chip registers
 
-#define LIS_CTRL_REG6   0x25        //bit 6:FIFO EN
+#define LIS_CTRL_REG5   0x24        //bit 6:FIFO EN
 #define LIS_AR_DATAX0   0x28
+#define LIS_FIFO_CTRL   0x2E
 #define LIS_FIFO_SRC    0x2F
 #define LIS_AM_READ     0x80
 #define LIS_AM_MULTI    0x40
@@ -90,14 +91,30 @@ lis3dsh_reschedule_timer(struct lis3dsh *ax)
 static void
 lis3dsh_query(struct lis3dsh *ax, uint8_t oid)
 {
-    // Read data
-    uint8_t msg[9] = { LIS_AR_DATAX0 | LIS_AM_READ | LIS_AM_MULTI, 0, 0, 0, 0, 0, 0, 0, 0};
+    // uint8_t msg[256] = {0};
+    uint8_t msg[7] = {0};
+    uint8_t fifo[2] = {LIS_FIFO_SRC| LIS_AM_READ , 0};
+    // uint8_t reg5[2] = {LIS_CTRL_REG5 , 0};
+    // uint8_t ctrl[2] = {LIS_FIFO_CTRL , 0};
+
+    uint8_t fifo_empty,fifo_ovrn,fifo_num = 0;
+    spidev_transfer(ax->spi, 1, sizeof(fifo), fifo);
+    fifo_num = fifo[1]&0x1f;
+
+    msg[0] = LIS_AR_DATAX0 | LIS_AM_READ | LIS_AM_MULTI ;
     uint8_t *d = &ax->data[ax->data_count];
+    // spidev_transfer(ax->spi, 1, (fifo_num*6+1), msg);
     spidev_transfer(ax->spi, 1, sizeof(msg), msg);
 
-    uint8_t fifo_empty = msg[8] & 0x20;        //  0=FIFO not empty; !0=FIFO empty
-    uint8_t fifo_ovrn = msg[8] & 0x40;         //  0=FIFO is not completely filled; !0=FIFO is completely filled
-    // Extract x, y, z measurements   
+    // spidev_transfer(ax->spi, 0, sizeof(reg5), reg5);
+    // spidev_transfer(ax->spi, 0, sizeof(ctrl), ctrl);
+
+    // d[0] = msg[fifo_num*5+1]; // x low bits
+    // d[1] = msg[fifo_num*5+2]; // x high bits
+    // d[2] = msg[fifo_num*5+3]; // y low bits
+    // d[3] = msg[fifo_num*5+4]; // y high bits
+    // d[4] = msg[fifo_num*5+5]; // z low bits
+    // d[5] = msg[fifo_num*5+6]; // z high bits
 
     d[0] = msg[1]; // x low bits
     d[1] = msg[2]; // x high bits
@@ -105,6 +122,11 @@ lis3dsh_query(struct lis3dsh *ax, uint8_t oid)
     d[3] = msg[4]; // y high bits
     d[4] = msg[5]; // z low bits
     d[5] = msg[6]; // z high bits
+
+    fifo[1]=0;
+    spidev_transfer(ax->spi, 1, sizeof(fifo), fifo);
+    fifo_empty = fifo[1]&0x20;
+    fifo_ovrn = fifo[1]&0x40;
 
     ax->data_count += 6;
     if (ax->data_count + 6 > ARRAY_SIZE(ax->data))
@@ -115,7 +137,7 @@ lis3dsh_query(struct lis3dsh *ax, uint8_t oid)
         ax->limit_count++;
 
     // check if we need to run the task again (more packets in fifo?)
-    if (!fifo_empty) {
+    if (!fifo_empty&&!(ax->fifo_disable)) {
         sched_wake_task(&lis3dsh_wake); // More data in fifo - wake this task again
     } else if (ax->flags & LIS_RUNNING) {
         // Sleep until next check time
@@ -132,8 +154,11 @@ lis3dsh_start(struct lis3dsh *ax, uint8_t oid)
 {
     sched_del_timer(&ax->timer);
     ax->flags = LIS_RUNNING;
-    uint8_t msg_fifo[2] = { LIS_CTRL_REG6, 0x40 };                //ENABLE FIFO
-    spidev_transfer(ax->spi, 0, sizeof(msg_fifo), msg_fifo);
+    ax->fifo_disable = 0;
+    uint8_t reg5[2] = {LIS_CTRL_REG5 , 0x40};
+    uint8_t ctrl[2] = {LIS_FIFO_CTRL , 0x80};
+    spidev_transfer(ax->spi, 0, sizeof(ctrl), ctrl);
+    spidev_transfer(ax->spi, 0, sizeof(reg5), reg5); 
     lis3dsh_reschedule_timer(ax);
 }
 
@@ -145,26 +170,22 @@ lis3dsh_stop(struct lis3dsh *ax, uint8_t oid)
     // Disable measurements
     sched_del_timer(&ax->timer);
     ax->flags = 0;
+    // Drain any measurements still in fifo
+    ax->fifo_disable = 1;
+    lis3dsh_query(ax, oid);
 
-    uint8_t msg_fifo[2] = { LIS_CTRL_REG6, 0x00 };                //DISABLE FIFO
+    uint8_t reg5[2] = {LIS_CTRL_REG5 , 0};
+    uint8_t ctrl[2] = {LIS_FIFO_CTRL , 0};
     uint32_t end1_time = timer_read_time();
-    spidev_transfer(ax->spi, 0, sizeof(msg_fifo), msg_fifo);
+    spidev_transfer(ax->spi, 0, sizeof(reg5), reg5);
+    spidev_transfer(ax->spi, 0, sizeof(ctrl), ctrl);
     uint32_t end2_time = timer_read_time();
 
-    // Drain any measurements still in fifo
-    uint8_t msg[2] = { LIS_FIFO_SRC | LIS_AM_READ , 0x00 };              
+    uint8_t msg[2] = { LIS_FIFO_SRC | LIS_AM_READ , 0};              
     spidev_transfer(ax->spi, 1, sizeof(msg), msg);
+    uint8_t fifo_status = msg[1];
 
-    uint8_t fifo_status = msg[1] & 0x20;
-
-    while (!fifo_status) {
-        lis3dsh_query(ax, oid);
-        msg[0] = LIS_FIFO_SRC | LIS_AM_READ;
-        msg[1] = 0x00;
-        spidev_transfer(ax->spi, 1, sizeof(msg), msg);
-        fifo_status = msg[1] & 0x20;
-    }
-    // Report final data
+    //Report final data
     if (ax->data_count)
         lis3dsh_report(ax, oid);
     lis3dsh_status(ax, oid, end1_time, end2_time, fifo_status);
@@ -188,6 +209,7 @@ command_query_lis3dsh(uint32_t *args)
     ax->flags = LIS_HAVE_START;
     ax->sequence = ax->limit_count = 0;
     ax->data_count = 0;
+    ax->fifo_disable = 0;
     sched_add_timer(&ax->timer);
 }
 DECL_COMMAND(command_query_lis3dsh,
