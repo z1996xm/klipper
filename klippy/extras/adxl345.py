@@ -312,6 +312,7 @@ class ADXL345:
             seq = last_sequence - seq_diff
             d = bytearray(params['data'])
             msg_cdiff = seq * SAMPLES_PER_BLOCK - chip_base
+
             for i in range(len(d) // BYTES_PER_SAMPLE):
                 d_xyz = d[i*BYTES_PER_SAMPLE:(i+1)*BYTES_PER_SAMPLE]
                 xlow, ylow, zlow, xzhigh, yzhigh = d_xyz
@@ -338,6 +339,7 @@ class ADXL345:
             params = self.query_adxl345_status_cmd.send([self.oid],
                                                         minclock=minclock)
             fifo = params['fifo'] & 0x7f
+            logging.info("fifo: %x", fifo)
             if fifo <= 32:
                 break
         else:

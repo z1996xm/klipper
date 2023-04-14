@@ -20,42 +20,23 @@ REG_LIS3DH_FIFO_CTRL = 0x2E
 REG_MOD_READ = 0x80
 REG_MOD_MULTI = 0x40
 
-
-LIS3DH_XYZ_ENABLE      =          (0x07)
-LIS3DH_BDU_NO_UPDATE	=           (0x1<<3)
-LIS3DH_FILTER_BW_800   =          (0x00) 
-LIS3DH_FULLSCALE_16    =          (0x40)      #/* 16 g */
-LIS3DH_SELFTEST_NORMAL =          (0x00)
-LIS3DH_SERIALINTERFACE_4WIRE    = (0x00)
-LIS3DH_DATARATE_1600   =          (0x90)
-LIS3DH_STREAM_MODE     =          (0x40)
-
-
-QUERY_RATES = {
-    25: 0x40, 50: 0x50, 100: 0x60,  400: 0x70,
-    800: 0x80, 1600: 0x90,
-}
-
-LIS3DSH_DEV_ID = 0x33
+LIS3DH_DEV_ID = 0x33
 SET_FIFO_CTL = 0x90
 
 FREEFALL_ACCEL = 9.80665 
-# SCALE_XY = 0.00048828125 * FREEFALL_ACCEL # 1 / 265 (at 3.3V) mg/LSB
-# SCALE_Z  = SCALE_XY
 
-SCALE = 12. * FREEFALL_ACCEL/16.
+SCALE = 48 * FREEFALL_ACCEL/64
 
 Accel_Measurement = collections.namedtuple(
     'Accel_Measurement', ('time', 'accel_x', 'accel_y', 'accel_z'))
-
 
 MIN_MSG_TIME = 0.100
 
 BYTES_PER_SAMPLE = 6
 SAMPLES_PER_BLOCK = 8
 
-# Printer class that controls LIS3DSH chip
-class LIS3DSH:
+# Printer class that controls LIS3DH chip
+class LIS3DH:
     def __init__(self, config):
         self.printer = config.get_printer()
         adxl345.AccelCommandHelper(config, self)
@@ -64,26 +45,24 @@ class LIS3DSH:
               '-x': (0, -SCALE), '-y': (1, -SCALE), '-z': (2, -SCALE)}
         axes_map = config.getlist('axes_map', ('x','y','z'), count=3)
         if any([a not in am for a in axes_map]):
-            raise config.error("Invalid lis3dsh axes_map parameter")
+            raise config.error("Invalid lis3dh axes_map parameter")
         self.axes_map = [am[a.strip()] for a in axes_map]
-        self.data_rate = config.getint('rate', 1600)
-        if self.data_rate not in QUERY_RATES:
-            raise config.error("Invalid rate parameter: %d" % (self.data_rate,))
+        self.data_rate = 1344       # MAX BW
         # Measurement storage (accessed from background thread)
         self.lock = threading.Lock()
         self.raw_samples = []
-        # Setup mcu sensor_lis3dsh bulk query code
-        self.spi = bus.MCU_SPI_from_config(config, 3, default_speed=3000000)
+        # Setup mcu sensor_lis3dh bulk query code
+        self.spi = bus.MCU_SPI_from_config(config, 3, default_speed=5000000)
         self.mcu = mcu = self.spi.get_mcu()
         self.oid = oid = mcu.create_oid()
-        self.query_lis3dsh_cmd = self.query_lis3dsh_end_cmd = None
-        self.query_lis3dsh_status_cmd = None
-        mcu.add_config_cmd("config_lis3dsh oid=%d spi_oid=%d"
+        self.query_lis3dh_cmd = self.query_lis3dh_end_cmd = None
+        self.query_lis3dh_status_cmd = None
+        mcu.add_config_cmd("config_lis3dh oid=%d spi_oid=%d"
                            % (oid, self.spi.get_oid()))
-        mcu.add_config_cmd("query_lis3dsh oid=%d clock=0 rest_ticks=0"
+        mcu.add_config_cmd("query_lis3dh oid=%d clock=0 rest_ticks=0"
                            % (oid,), on_restart=True)
         mcu.register_config_callback(self._build_config)
-        mcu.register_response(self._handle_lis3dsh_data, "lis3dsh_data", oid)
+        mcu.register_response(self._handle_lis3dh_data, "lis3dh_data", oid)
         # Clock tracking
         self.last_sequence = self.max_query_duration = 0
         self.last_limit_count = self.last_error_count = 0
@@ -93,19 +72,19 @@ class LIS3DSH:
             self.printer, self._api_update, self._api_startstop, 0.100)
         self.name = config.get_name().split()[-1]
         wh = self.printer.lookup_object('webhooks')
-        wh.register_mux_endpoint("lis3dsh/dump_lis3dsh", "sensor", self.name,
-                                 self._handle_dump_lis3dsh)
+        wh.register_mux_endpoint("lis3dh/dump_lis3dh", "sensor", self.name,
+                                 self._handle_dump_lis3dh)
     def _build_config(self):
         cmdqueue = self.spi.get_command_queue()
-        self.query_lis3dsh_cmd = self.mcu.lookup_command(
-            "query_lis3dsh oid=%c clock=%u rest_ticks=%u", cq=cmdqueue)
-        self.query_lis3dsh_end_cmd = self.mcu.lookup_query_command(
-            "query_lis3dsh oid=%c clock=%u rest_ticks=%u",
-            "lis3dsh_status oid=%c clock=%u query_ticks=%u next_sequence=%hu"
+        self.query_lis3dh_cmd = self.mcu.lookup_command(
+            "query_lis3dh oid=%c clock=%u rest_ticks=%u", cq=cmdqueue)
+        self.query_lis3dh_end_cmd = self.mcu.lookup_query_command(
+            "query_lis3dh oid=%c clock=%u rest_ticks=%u",
+            "lis3dh_status oid=%c clock=%u query_ticks=%u next_sequence=%hu"
             " buffered=%c fifo=%c limit_count=%hu", oid=self.oid, cq=cmdqueue)
-        self.query_lis3dsh_status_cmd = self.mcu.lookup_query_command(
-            "query_lis3dsh_status oid=%c",
-            "lis3dsh_status oid=%c clock=%u query_ticks=%u next_sequence=%hu"
+        self.query_lis3dh_status_cmd = self.mcu.lookup_query_command(
+            "query_lis3dh_status oid=%c",
+            "lis3dh_status oid=%c clock=%u query_ticks=%u next_sequence=%hu"
             " buffered=%c fifo=%c limit_count=%hu", oid=self.oid, cq=cmdqueue)
     def read_reg(self, reg):
         params = self.spi.spi_transfer([reg | REG_MOD_READ, 0x00])
@@ -116,14 +95,14 @@ class LIS3DSH:
         stored_val = self.read_reg(reg)
         if stored_val != val:
             raise self.printer.command_error(
-                    "Failed to set LIS3DSH register [0x%x] to 0x%x: got 0x%x. "
+                    "Failed to set LIS3DH register [0x%x] to 0x%x: got 0x%x. "
                     "This is generally indicative of connection problems "
-                    "(e.g. faulty wiring) or a faulty lis3dsh chip." % (
+                    "(e.g. faulty wiring) or a faulty lis3dh chip." % (
                         reg, val, stored_val))
     # Measurement collection
     def is_measuring(self):
         return self.query_rate > 0
-    def _handle_lis3dsh_data(self, params):
+    def _handle_lis3dh_data(self, params):
         with self.lock:
             self.raw_samples.append(params)
     def _extract_samples(self, raw_samples):
@@ -149,16 +128,8 @@ class LIS3DSH:
                 rx = ((xhigh << 8) | xlow) - ((xhigh & 0x80) << 9)
                 ry = ((yhigh << 8) | ylow) - ((yhigh & 0x80) << 9)
                 rz = ((zhigh << 8) | zlow) - ((zhigh & 0x80) << 9)
-                
-                # rx = ((xhigh << 8) | xlow)
-                # ry = ((yhigh << 8) | ylow)
-                # rz = ((zhigh << 8) | zlow)
 
                 raw_xyz = (rx, ry, rz)
-
-                # x =round((raw_xyz[x_pos] /16)*12*9.80665, 6)
-                # y =round((raw_xyz[y_pos] /16)*12*9.80665, 6)
-                # z =round((raw_xyz[z_pos] /16)*12*9.80665, 6)
 
                 x = round(raw_xyz[x_pos] * x_scale, 6)
                 y = round(raw_xyz[y_pos] * y_scale, 6)
@@ -173,13 +144,13 @@ class LIS3DSH:
     def _update_clock(self, minclock=0):
         # Query current state
         for retry in range(5):
-            params = self.query_lis3dsh_status_cmd.send([self.oid],
+            params = self.query_lis3dh_status_cmd.send([self.oid],
                                                         minclock=minclock)
-            fifo = params['fifo'] & 0x7f
+            fifo = params['fifo'] & 0x1f
             if fifo <= 32:
                 break
         else:
-            raise self.printer.command_error("Unable to query lis3dsh fifo")
+            raise self.printer.command_error("Unable to query lis3dh fifo")
         mcu_clock = self.mcu.clock32_to_clock64(params['clock'])
         sequence = (self.last_sequence & ~0xffff) | params['next_sequence']
         if sequence < self.last_sequence:
@@ -201,65 +172,34 @@ class LIS3DSH:
                      + buffered // BYTES_PER_SAMPLE + fifo)
         # The "chip clock" is the message counter plus .5 for average
         # inaccuracy of query responses and plus .5 for assumed offset
-        # of lis3dsh hw processing time.
-        chip_clock = msg_count + 1
-        self.clock_sync.update(mcu_clock + duration // 2, chip_clock)
-    def _update_clock(self, minclock=0):
-        # Query current state
-        for retry in range(5):
-            params = self.query_lis3dsh_status_cmd.send([self.oid],
-                                                        minclock=minclock)
-            fifo = params['fifo'] & 0x7f
-            if fifo <= 32:
-                break
-        else:
-            raise self.printer.command_error("Unable to query lis3dsh fifo")
-        mcu_clock = self.mcu.clock32_to_clock64(params['clock'])
-        sequence = (self.last_sequence & ~0xffff) | params['next_sequence']
-        if sequence < self.last_sequence:
-            sequence += 0x10000
-        self.last_sequence = sequence
-        buffered = params['buffered']
-        limit_count = (self.last_limit_count & ~0xffff) | params['limit_count']
-        if limit_count < self.last_limit_count:
-            limit_count += 0x10000
-        self.last_limit_count = limit_count
-        duration = params['query_ticks']
-        if duration > self.max_query_duration:
-            # Skip measurement as a high query time could skew clock tracking
-            self.max_query_duration = max(2 * self.max_query_duration,
-                                          self.mcu.seconds_to_clock(.000005))
-            return
-        self.max_query_duration = 2 * duration
-        msg_count = (sequence * SAMPLES_PER_BLOCK
-                     + buffered // BYTES_PER_SAMPLE + fifo)
-        # The "chip clock" is the message counter plus .5 for average
-        # inaccuracy of query responses and plus .5 for assumed offset
-        # of lis3dsh hw processing time.
+        # of lis3dh hw processing time.
         chip_clock = msg_count + 1
         self.clock_sync.update(mcu_clock + duration // 2, chip_clock)
     def _start_measurements(self):
         if self.is_measuring():
             return
-        # In case of miswiring, testing LIS3DSH device ID prevents treating
+        # In case of miswiring, testing LIS3DH device ID prevents treating
         # noise or wrong signal as a correctly initialized device
         dev_id = self.read_reg(REG_LIS3DH_WHO_AM_I_ADDR)
-        logging.info("lis3dsh_dev_id: %x", dev_id)
-        if dev_id != LIS3DSH_DEV_ID:
+        logging.info("lis3dh_dev_id: %x", dev_id)
+        if dev_id != LIS3DH_DEV_ID:
             raise self.printer.command_error(
-                "Invalid lis3dsh id (got %x vs %x).\n"
+                "Invalid lis3dh id (got %x vs %x).\n"
                 "This is generally indicative of connection problems\n"
-                "(e.g. faulty wiring) or a faulty lis3dsh chip."
-                % (dev_id, LIS3DSH_DEV_ID))
+                "(e.g. faulty wiring) or a faulty lis3dh chip."
+                % (dev_id, LIS3DH_DEV_ID))
         # Setup chip in requested query rate
-        dev_data =  0x47 
+        dev_data =  0x97 
         self.set_reg(REG_LIS3DH_CTRL_REG1_ADDR &(~(0xC0)), dev_data)
-        dev_data =  0x30
+        dev_data =  0xB0
         self.set_reg(REG_LIS3DH_CTRL_REG4_ADDR & (~(0xC0)), dev_data)
-        dev_data =  0x40
-        self.set_reg(REG_LIS3DH_CTRL_REG5_ADDR & (~(0xC0)), dev_data)       #Stream Mode. If the FIFO is full the new sample overwrites the older one
-        dev_data = 0x80
-        self.set_reg(REG_LIS3DH_FIFO_CTRL & (~(0xC0)), dev_data) 
+        dev_data =  0x00
+        self.set_reg(REG_LIS3DH_FIFO_CTRL & (~(0xC0)), dev_data)        
+        # dev_data =  0x80
+        # self.set_reg(REG_LIS3DH_FIFO_CTRL & (~(0xC0)), dev_data) #Stream Mode. If the FIFO is full the new sample overwrites the older one
+        # dev_data =  0x40
+        # self.set_reg(REG_LIS3DH_CTRL_REG5_ADDR & (~(0xC0)), dev_data)       
+
         # Setup samples
         with self.lock:
             self.raw_samples = []
@@ -269,9 +209,9 @@ class LIS3DSH:
         reqclock = self.mcu.print_time_to_clock(print_time)
         rest_ticks = self.mcu.seconds_to_clock(4. / self.data_rate)
         self.query_rate = self.data_rate
-        self.query_lis3dsh_cmd.send([self.oid, reqclock, rest_ticks],
+        self.query_lis3dh_cmd.send([self.oid, reqclock, rest_ticks],
                                     reqclock=reqclock)
-        logging.info("LIS3DSH starting '%s' measurements", self.name)
+        logging.info("LIS3DH starting '%s' measurements", self.name)
         # Initialize clock tracking
         self.last_sequence = 0
         self.last_limit_count = self.last_error_count = 0
@@ -283,11 +223,15 @@ class LIS3DSH:
         if not self.is_measuring():
             return
         # Halt bulk reading
-        params = self.query_lis3dsh_end_cmd.send([self.oid, 0, 0])
+        params = self.query_lis3dh_end_cmd.send([self.oid, 0, 0])
         self.query_rate = 0
         with self.lock:
             self.raw_samples = []
-        logging.info("LIS3DSH finished '%s' measurements", self.name)
+        logging.info("LIS3DH finished '%s' measurements", self.name)
+        dev_data =  0x00
+        self.set_reg(REG_LIS3DH_FIFO_CTRL & (~(0xC0)), dev_data) 
+        dev_data =  0x00
+        self.set_reg(REG_LIS3DH_CTRL_REG5_ADDR & (~(0xC0)), dev_data)        
     # API interface
     def _api_update(self, eventtime):
         self._update_clock()
@@ -306,7 +250,7 @@ class LIS3DSH:
             self._start_measurements()
         else:
             self._finish_measurements()
-    def _handle_dump_lis3dsh(self, web_request):
+    def _handle_dump_lis3dh(self, web_request):
         self.api_dump.add_client(web_request)
         hdr = ('time', 'x_acceleration', 'y_acceleration', 'z_acceleration')
         web_request.send({'header': hdr})
@@ -316,7 +260,7 @@ class LIS3DSH:
 
 
 def load_config(config):
-    return LIS3DSH(config)
+    return LIS3DH(config)
 
 def load_config_prefix(config):
-    return LIS3DSH(config)
+    return LIS3DH(config)
