@@ -22,7 +22,7 @@ REG_MOD_READ = 0x80
 LIS2DW_DEV_ID = 0x44
 
 FREEFALL_ACCEL = 9.80665 
-# SCALE = 48 * FREEFALL_ACCEL/64
+#SCALE = 48 * FREEFALL_ACCEL/64
 SCALE =FREEFALL_ACCEL*1.952/4
 
 Accel_Measurement = collections.namedtuple(
@@ -45,7 +45,7 @@ class LIS2DW:
         if any([a not in am for a in axes_map]):
             raise config.error("Invalid lis2dw axes_map parameter")
         self.axes_map = [am[a.strip()] for a in axes_map]
-        self.data_rate = 1600       # MAX BW       ???????????             
+        self.data_rate = 800       # MAX BW       ???????????             
         # Measurement storage (accessed from background thread)
         self.lock = threading.Lock()
         self.raw_samples = []
@@ -189,14 +189,14 @@ class LIS2DW:
                 % (dev_id, LIS2DW_DEV_ID))
         # Setup chip in requested query rate
         # dev_data =  0x04 
-        # self.set_reg(REG_LIS2DW_CTRL_REG2_ADDR &(~(0x80)), dev_data)
+        # self.set_reg(REG_LIS2DW_CTRL_REG2_ADDR, dev_data)
         dev_data =  0x30
-        self.set_reg(REG_LIS2DW_CTRL_REG6_ADDR & (~(0x80)), dev_data) 
+        self.set_reg(REG_LIS2DW_CTRL_REG6_ADDR, dev_data)    
         dev_data =  0xC0
-        self.set_reg(REG_LIS2DW_FIFO_CTRL & (~(0x80)), dev_data)       
+        self.set_reg(REG_LIS2DW_FIFO_CTRL, dev_data)     
         dev_data =  0x84 
-        self.set_reg(REG_LIS2DW_CTRL_REG1_ADDR &(~(0x80)), dev_data)
-       
+        self.set_reg(REG_LIS2DW_CTRL_REG1_ADDR, dev_data)
+      
 
         # Setup samples
         with self.lock:
@@ -226,10 +226,8 @@ class LIS2DW:
         with self.lock:
             self.raw_samples = []
         logging.info("LIS2DW finished '%s' measurements", self.name)
-        # dev_data =  0x00
-        # self.set_reg(REG_LIS2DW_FIFO_CTRL & (~(0xC0)), dev_data) 
-        # dev_data =  0x00
-        # self.set_reg(REG_LIS2DW_CTRL_REG5_ADDR & (~(0xC0)), dev_data)        
+        dev_data =  0x00
+        self.set_reg(REG_LIS2DW_FIFO_CTRL, dev_data)      
     # API interface
     def _api_update(self, eventtime):
         self._update_clock()
@@ -265,3 +263,5 @@ def load_config_prefix(config):
 
 #ACCELEROMETER_QUERY
 #TEST_RESONANCES AXIS=X
+# ~/klipper/scripts/calibrate_shaper.py /tmp/resonances_x_*.csv -o /tmp/shaper_calibrate_x.png
+# ~/klipper/scripts/calibrate_shaper.py /tmp/resonances_y_*.csv -o /tmp/shaper_calibrate_y.png
