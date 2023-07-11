@@ -6,6 +6,19 @@
 #include "sched.h" // DECL_TASK
 #include "spicmds.h" // spidev_transfer
 
+
+#define LIS_CTRL1            0x20       
+#define LIS_CTRL2            0x21
+#define LIS_CTRL3            0x22
+#define LIS_CTRL6            0x25
+#define LIS_STATUS           0x27
+#define LIS_AR_DATAX0        0x28
+#define LIS_AM_READ          0x80
+#define LIS_AM_MULTI         0x40
+
+#define LIS_FIFO_CTRL        0x2E
+#define LIS_FIFO_SAMPLES     0x2F
+
 struct lis2dw {
     struct timer timer;
     uint32_t rest_ticks;
@@ -30,7 +43,6 @@ lis2dw_event(struct timer *timer)
     sched_wake_task(&lis2dw_wake);
     return SF_DONE;
 }
-
 
 void
 command_config_lis2dw(uint32_t *args)
@@ -73,18 +85,6 @@ lis2dw_reschedule_timer(struct lis2dw *ax)
     irq_enable();
 }
 
-
-#define LIS_CTRL1            0x20       
-#define LIS_CTRL2            0x21
-#define LIS_CTRL3            0x22
-#define LIS_CTRL6            0x25
-#define LIS_STATUS           0x27
-#define LIS_AR_DATAX0        0x28
-#define LIS_AM_READ          0x80
-#define LIS_AM_MULTI         0x40
-
-#define LIS_FIFO_CTRL        0x2E
-#define LIS_FIFO_SAMPLES     0x2F
 
 // Query accelerometer data
 static void
