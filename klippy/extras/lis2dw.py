@@ -44,7 +44,7 @@ class LIS2DW:
         if any([a not in am for a in axes_map]):
             raise config.error("Invalid lis2dw axes_map parameter")
         self.axes_map = [am[a.strip()] for a in axes_map]
-        self.data_rate = 800              
+        self.data_rate = 1600              
         # Measurement storage (accessed from background thread)
         self.lock = threading.Lock()
         self.raw_samples = []
