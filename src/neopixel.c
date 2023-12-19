@@ -74,9 +74,10 @@ neopixel_delay(neopixel_time_t start, neopixel_time_t ticks)
 
 #endif
 
-#define PULSE_LONG_TICKS  nsecs_to_ticks(650)
-#define PULSE_SHORT_TICKS nsecs_to_ticks(200)
-#define BIT_MIN_TICKS     nsecs_to_ticks(1250)
+#define PULSE_LONG_TICKS  nsecs_to_ticks(700)
+// #define PULSE_SHORT_TICKS nsecs_to_ticks(200)
+#define PULSE_SHORT_TICKS nsecs_to_ticks(300)
+#define BIT_MIN_TICKS     nsecs_to_ticks(500)
 
 
 /****************************************************************
@@ -129,37 +130,41 @@ send_data(struct neopixel_s *n)
         uint_fast8_t byte = *data++;
         uint_fast8_t bits = 8;
         while (bits--) {
+            neopixel_delay(last_start, BIT_MIN_TICKS);
             if (byte & 0x80) {
                 // Long pulse
-                neopixel_delay(last_start, BIT_MIN_TICKS);
-                irq_disable();
+                // neopixel_delay(last_start, BIT_MIN_TICKS);
                 neopixel_time_t start = neopixel_get_time();
-                gpio_out_toggle_noirq(pin);
-                irq_enable();
-
                 if (neopixel_check_elapsed(last_start, start, bit_max_ticks))
                     goto fail;
-                last_start = start;
-                byte <<= 1;
 
+                irq_disable();
+                gpio_out_toggle_noirq(pin);
+                irq_enable();
                 neopixel_delay(start, PULSE_LONG_TICKS);
                 irq_disable();
                 gpio_out_toggle_noirq(pin);
                 irq_enable();
-
                 neopixel_delay(neopixel_get_time(), PULSE_SHORT_TICKS);
+
+                last_start = start;
+                byte <<= 1;
             } else {
                 // Short pulse
-                neopixel_delay(last_start, BIT_MIN_TICKS);
-                irq_disable();
+                // neopixel_delay(last_start, BIT_MIN_TICKS);
                 neopixel_time_t start = neopixel_get_time();
-                gpio_out_toggle_noirq(pin);
-                neopixel_delay(start, PULSE_SHORT_TICKS);
-                gpio_out_toggle_noirq(pin);
-                irq_enable();
-
                 if (neopixel_check_elapsed(last_start, start, bit_max_ticks))
                     goto fail;
+
+                irq_disable();
+                gpio_out_toggle_noirq(pin);
+                irq_enable();
+                neopixel_delay(start, PULSE_SHORT_TICKS);
+                irq_disable();
+                gpio_out_toggle_noirq(pin);
+                irq_enable();
+                neopixel_delay(neopixel_get_time(), PULSE_LONG_TICKS);
+
                 last_start = start;
                 byte <<= 1;
             }
