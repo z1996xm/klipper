@@ -11,9 +11,11 @@ class GCodeButton:
         self.name = config.get_name().split(' ')[-1]
         self.pin = config.get('pin')
         self.last_state = 0
+        self.press_state = 0
         buttons = self.printer.load_object(config, "buttons")
         if config.get('analog_range', None) is None:
             buttons.register_buttons([self.pin], self.button_callback)
+
         else:
             amin, amax = config.getfloatlist('analog_range', count=2)
             pullup = config.getfloat('analog_pullup_resistor', 4700., above=0.)
@@ -32,15 +34,33 @@ class GCodeButton:
     def cmd_QUERY_BUTTON(self, gcmd):
         gcmd.respond_info(self.name + ": " + self.get_status()['state'])
 
+    # def button_callback(self, eventtime, state):
+    #     self.last_state = state
+    #     template = self.press_template
+    #     if not state:
+    #         template = self.release_template
+    #     try:
+    #         self.gcode.run_script(template.render())
+    #     except:
+    #         logging.exception("Script running error")
+
     def button_callback(self, eventtime, state):
         self.last_state = state
-        template = self.press_template
-        if not state:
-            template = self.release_template
-        try:
-            self.gcode.run_script(template.render())
-        except:
-            logging.exception("Script running error")
+        if state == 1:
+            if self.press_state == 1:
+                template = self.release_template
+                self.press_state = 0
+                try:
+                    self.gcode.run_script(template.render())
+                except:
+                    logging.exception("Script running error")  
+        else:    
+            template = self.press_template
+            self.press_state = 1
+            try:
+                self.gcode.run_script(template.render())
+            except:
+                logging.exception("Script running error")    
 
     def get_status(self, eventtime=None):
         if self.last_state:
