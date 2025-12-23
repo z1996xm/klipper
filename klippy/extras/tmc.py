@@ -17,11 +17,12 @@ def ffs(mask):
 
 class FieldHelper:
     def __init__(self, all_fields, signed_fields=[], field_formatters={},
-                 registers=None):
+                 tmc_bit=None,registers=None):
         self.all_fields = all_fields
         self.signed_fields = {sf: 1 for sf in signed_fields}
         self.field_formatters = field_formatters
         self.registers = registers
+        self.tmcbit = tmc_bit
         if self.registers is None:
             self.registers = collections.OrderedDict()
         self.field_to_register = { f: r for r, fields in self.all_fields.items()
@@ -229,6 +230,7 @@ class TMCCommandHelper:
     def __init__(self, config, mcu_tmc, current_helper):
         self.printer = config.get_printer()
         self.stepper_name = ' '.join(config.get_name().split()[1:])
+        logging.info("stepper_name %s", self.stepper_name)
         self.name = config.get_name().split()[-1]
         self.mcu_tmc = mcu_tmc
         self.current_helper = current_helper
@@ -263,8 +265,17 @@ class TMCCommandHelper:
     def _init_registers(self, print_time=None):
         # Send registers
         for reg_name in list(self.fields.registers.keys()):
-            val = self.fields.registers[reg_name] # Val may change during loop
-            self.mcu_tmc.set_register(reg_name, val, print_time)
+            logging.info("tmc-reg_name '%s'", reg_name)
+            if reg_name == "PLL":
+                self.mcu_tmc.set_register('PLL', 0x05E5, print_time)
+                self.mcu_tmc.set_register('PLL', 0xF418, print_time)
+                break
+
+        for reg_name in list(self.fields.registers.keys()):
+            if reg_name != "PLL":
+                val = self.fields.registers[reg_name] # Val may change during loop
+                logging.info("orgin-reg_name '%s' val %s ", reg_name, val)
+                self.mcu_tmc.set_register(reg_name, val, print_time)
     cmd_INIT_TMC_help = "Initialize TMC stepper driver registers"
     def cmd_INIT_TMC(self, gcmd):
         logging.info("INIT_TMC %s", self.name)

@@ -259,8 +259,6 @@ FieldFormatters.update({
     "s2vsa":            (lambda v: "1(ShortToSupply_A!)" if v else ""),
     "s2vsb":            (lambda v: "1(ShortToSupply_B!)" if v else ""),
     "adc_temp":         (lambda v: "0x%04x(%.1fC)" % (v, ((v - 2038) / 7.7))),
-    "adc_vsupply":      (lambda v: "0x%04x(%.3fV)" % (v, v * 0.009732)),
-    "adc_ain":          (lambda v: "0x%04x(%.3fmV)" % (v, v * 0.3052)),
 })
 
 
@@ -364,7 +362,7 @@ class TMC2240:
         # Setup basic register values
         tmc.TMCWaveTableHelper(config, self.mcu_tmc)
         self.fields.set_config_field(config, "offset_sin90", 0)
-        tmc.TMCStealthchopHelper(config, self.mcu_tmc)
+        tmc.TMCStealthchopHelper(config, self.mcu_tmc, TMC_FREQUENCY)
         set_config_field = self.fields.set_config_field
         #   GCONF
         set_config_field(config, "multistep_filt", True)
